@@ -1,0 +1,13 @@
+[package]
+name = "corona-rs"
+version = "0.1.0"
+authors = ["varjolintu <sami.vanttinen@protonmail.com>"]
+edition = "2018"
+
+[dependencies]
+csv = "1.1.3"
+curl = "0.4.14"
+failure = "0.1.7"
+regex = "1"
+termion = "1.5.5"
+tui = "0.8.0"
