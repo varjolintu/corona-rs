@@ -27,6 +27,7 @@ enum DataType {
     Confirmed,
     Deaths,
     Recovered,
+    Active,
 }
 
 static CONFIRMED_URL: &str = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv";
@@ -40,9 +41,11 @@ struct Country {
     confirmed: u32,
     deaths: u32,
     recovered: u32,
+    active: u32,
     confirmed_map: Vec<u32>,
     deaths_map: Vec<u32>,
     recovered_map: Vec<u32>,
+    active_map: Vec<u32>,
     headers: Vec<String>,
 }
 
@@ -59,11 +62,11 @@ impl App {
 }
 
 impl Country {
-    fn new(country: String, confirmed: u32, deaths: u32, recovered: u32,
-           confirmed_map: Vec<u32>, deaths_map: Vec<u32>, recovered_map: Vec<u32>,
+    fn new(country: String, confirmed: u32, deaths: u32, recovered: u32, active: u32,
+           confirmed_map: Vec<u32>, deaths_map: Vec<u32>, recovered_map: Vec<u32>, active_map: Vec<u32>,
            headers: Vec<String>) -> Country {
         Country {
-            country, confirmed, deaths, recovered, confirmed_map, deaths_map, recovered_map, headers
+            country, confirmed, deaths, recovered, active, confirmed_map, deaths_map, recovered_map, active_map, headers
         }
     }
 
@@ -74,7 +77,8 @@ impl Country {
             self.deaths.to_string(),
             format!("{:.2}%", get_percentage(self.deaths, self.confirmed)),
             self.recovered.to_string(),
-            format!("{:.2}%", get_percentage(self.recovered, self.confirmed))
+            format!("{:.2}%", get_percentage(self.recovered, self.confirmed)),
+            self.active.to_string()
         ]
     }
 }
@@ -133,6 +137,7 @@ fn get_results<R: Read>(reader: &mut csv::Reader<R>, countries_map: &mut HashMap
         let mut confirmed_list: Vec<u32> = Vec::new();
         let mut deaths_list: Vec<u32> = Vec::new();
         let mut recovered_list: Vec<u32> = Vec::new();
+        let mut active_list: Vec<u32> = Vec::new();
 
         for i in 4..header_count {
             let value: u32 = record[i].parse().unwrap();
@@ -140,6 +145,7 @@ fn get_results<R: Read>(reader: &mut csv::Reader<R>, countries_map: &mut HashMap
             if data_type == DataType::Confirmed {
                 confirmed = value;
                 confirmed_list.push(value);
+                active_list.push(value);
             } else if data_type == DataType::Deaths {
                 deaths = value;
                 deaths_list.push(value);
@@ -150,38 +156,57 @@ fn get_results<R: Read>(reader: &mut csv::Reader<R>, countries_map: &mut HashMap
         }
 
         if countries_map.contains_key(country) {
-            let old_value = countries_map.get(country).unwrap();
-            confirmed += old_value.confirmed;
-            deaths += old_value.deaths;
-            recovered += old_value.recovered;
+            let old = countries_map.get(country).unwrap();
+            confirmed += old.confirmed;
+            deaths += old.deaths;
+            recovered += old.recovered;
 
             // Add to existing values
             if data_type == DataType::Confirmed {
-                deaths_list = old_value.deaths_map.to_vec();
-                recovered_list = old_value.recovered_map.to_vec();
-                sum_vectors(&old_value.confirmed_map, &mut confirmed_list);
+                deaths_list = old.deaths_map.to_vec();
+                recovered_list = old.recovered_map.to_vec();
+                sum_vectors(&old.confirmed_map, &mut confirmed_list);
+                sum_vectors(&old.confirmed_map, &mut active_list);
             } else if data_type == DataType::Deaths {
-                confirmed_list = old_value.confirmed_map.to_vec();
-                recovered_list = old_value.recovered_map.to_vec();
+                confirmed_list = old.confirmed_map.to_vec();
+                recovered_list = old.recovered_map.to_vec();
+                active_list = old.active_map.to_vec();
 
-                if old_value.deaths_map.len() > 0 {
-                    sum_vectors(&old_value.deaths_map, &mut deaths_list);
+                if old.deaths_map.len() > 0 {
+                    sum_vectors(&old.deaths_map, &mut deaths_list);
                 }
             } else if data_type == DataType::Recovered {
-                confirmed_list = old_value.confirmed_map.to_vec();
-                deaths_list = old_value.deaths_map.to_vec();
+                confirmed_list = old.confirmed_map.to_vec();
+                deaths_list = old.deaths_map.to_vec();
+                active_list = old.active_map.to_vec();
 
-                if old_value.recovered_map.len() > 0 {
-                    sum_vectors(&old_value.recovered_map, &mut recovered_list);
-                }    
+                if old.recovered_map.len() > 0 {
+                    sum_vectors(&old.recovered_map, &mut recovered_list);
+                }
             }
         }
 
         countries_map.insert(country.to_string(), Country::new(country.to_string(),
-                             confirmed, deaths, recovered, confirmed_list, deaths_list, recovered_list, Vec::new()));
+                             confirmed, deaths, recovered, 0, confirmed_list, deaths_list, recovered_list, active_list, Vec::new()));
     }
     
     Ok(())
+}
+
+// Calculates active cases
+fn add_active(countries_map: &mut HashMap<String, Country>) {
+    for (_c, mut country) in countries_map {
+        let mut deaths_iter = country.deaths_map.iter();
+        let mut recovered_iter = country.recovered_map.iter();
+
+        for i in country.active_map.iter_mut() {
+            let recovered = recovered_iter.next().unwrap();
+            let deaths = deaths_iter.next().unwrap();
+            *i -= *recovered + deaths;
+        }
+
+        country.active = *country.active_map.last().unwrap();
+    }
 }
 
 // Adds a "TOTAL" summary country to the HashMap that contains summed results
@@ -189,9 +214,11 @@ fn add_summary(countries_map: &mut HashMap<String, Country>, header_map: Vec<Str
     let mut total_confirmed: u32 = 0;
     let mut total_deaths: u32 = 0;
     let mut total_recovered: u32 = 0;
+    let mut total_active: u32 = 0;
     let mut total_confirmed_map: Vec<u32> = Vec::new();
     let mut total_deaths_map: Vec<u32> = Vec::new();
     let mut total_recovered_map: Vec<u32> = Vec::new();
+    let mut total_active_map: Vec<u32> = Vec::new();
     let mut list: Vec<_> = countries_map.iter().collect();
 
     list.sort_by(|a, b| b.1.confirmed.cmp(&a.1.confirmed));
@@ -199,6 +226,7 @@ fn add_summary(countries_map: &mut HashMap<String, Country>, header_map: Vec<Str
         total_confirmed += v.confirmed;
         total_deaths += v.deaths;
         total_recovered += v.recovered;
+        total_active += v.active;
 
         // Init vectors if needed
         if total_confirmed_map.len() == 0 {
@@ -213,14 +241,19 @@ fn add_summary(countries_map: &mut HashMap<String, Country>, header_map: Vec<Str
             total_recovered_map = vec![0; v.recovered_map.len()];
         }
 
+        if total_active_map.len() == 0 {
+            total_active_map = vec![0; v.active_map.len()];
+        }
+
         sum_vectors(&v.confirmed_map, &mut total_confirmed_map);
         sum_vectors(&v.deaths_map, &mut total_deaths_map);
         sum_vectors(&v.recovered_map, &mut total_recovered_map);
+        sum_vectors(&v.active_map, &mut total_active_map);
     }
 
     countries_map.insert("TOTAL".to_string(), Country::new("TOTAL".to_string(),
-                         total_confirmed, total_deaths, total_recovered,
-                         total_confirmed_map, total_deaths_map, total_recovered_map, header_map));
+                         total_confirmed, total_deaths, total_recovered, total_active,
+                         total_confirmed_map, total_deaths_map, total_recovered_map, total_active_map, header_map));
 }
 
 fn get_data() -> Result<HashMap<String, Country>, csv::Error> {
@@ -238,6 +271,7 @@ fn get_data() -> Result<HashMap<String, Country>, csv::Error> {
     get_results(&mut reader_conf, &mut countries_map, header_count, DataType::Confirmed).unwrap();
     get_results(&mut reader_deaths, &mut countries_map, header_count, DataType::Deaths).unwrap();
     get_results(&mut reader_recov, &mut countries_map, header_count, DataType::Recovered).unwrap();
+    add_active(&mut countries_map);
     add_summary(&mut countries_map, header_map);
 
     Ok(countries_map)
@@ -251,6 +285,7 @@ fn get_table_columns(countries_map: &HashMap<String, Country>, sorty_by: DataTyp
         DataType::Confirmed => columns.sort_by(|a, b| b.1.confirmed.cmp(&a.1.confirmed)),
         DataType::Deaths => columns.sort_by(|a, b| b.1.deaths.cmp(&a.1.deaths)),
         DataType::Recovered => columns.sort_by(|a, b| b.1.recovered.cmp(&a.1.recovered)),
+        DataType::Active => columns.sort_by(|a, b| b.1.active.cmp(&a.1.active)),
     }
 
     for (_c, v) in &columns {
@@ -260,15 +295,17 @@ fn get_table_columns(countries_map: &HashMap<String, Country>, sorty_by: DataTyp
     table
 }
 
-fn get_chart_from_country(countries_map: &HashMap<String, Country>, country: String) -> (Vec<(f64, f64)>, Vec<(f64, f64)>, Vec<(f64, f64)>) {
+fn get_chart_from_country(countries_map: &HashMap<String, Country>, country: String) -> (Vec<(f64, f64)>, Vec<(f64, f64)>, Vec<(f64, f64)>, Vec<(f64, f64)>) {
     let selected_country = &countries_map.get(&country).unwrap();
     let confirmed_data = &selected_country.confirmed_map;
     let deaths_data = &selected_country.deaths_map;
     let recovered_data = &selected_country.recovered_map;
+    let active_data = &selected_country.active_map;
 
     let mut confirmed_final: Vec<(f64, f64)> = Vec::new();
     let mut deaths_final: Vec<(f64, f64)> = Vec::new();
     let mut recovered_final: Vec<(f64, f64)> = Vec::new();
+    let mut active_final: Vec<(f64, f64)> = Vec::new();
 
     for (i, x) in confirmed_data.iter().enumerate() {
         confirmed_final.push((i as f64, *x as f64));
@@ -282,16 +319,21 @@ fn get_chart_from_country(countries_map: &HashMap<String, Country>, country: Str
         recovered_final.push((i as f64, *x as f64));
     }
 
-    (confirmed_final, deaths_final, recovered_final)
+    for (i, x) in active_data.iter().enumerate() {
+        active_final.push((i as f64, *x as f64));
+    }
+
+    (confirmed_final, deaths_final, recovered_final, active_final)
 }
 
 fn update_data(countries_map: &HashMap<String, Country>, current_table: &Vec<Vec<String>>, selected: usize, 
-          confirmed_data: &mut Vec<(f64, f64)>, deaths_data: &mut Vec<(f64, f64)>, recovered_data: &mut Vec<(f64, f64)>) -> String {
+          confirmed_data: &mut Vec<(f64, f64)>, deaths_data: &mut Vec<(f64, f64)>, recovered_data: &mut Vec<(f64, f64)>, active_data: &mut Vec<(f64, f64)>) -> String {
     let selected_country = current_table.get(selected).unwrap().first().unwrap().to_string();
-    let (confirmed_upd, deaths_upd, recovered_upd) = get_chart_from_country(&countries_map, selected_country.to_string());
+    let (confirmed_upd, deaths_upd, recovered_upd, active_upd) = get_chart_from_country(&countries_map, selected_country.to_string());
     *confirmed_data = confirmed_upd;
     *deaths_data = deaths_upd;
     *recovered_data = recovered_upd;
+    *active_data = active_upd;
 
     selected_country
 }
@@ -306,9 +348,10 @@ fn main() -> Result<(), failure::Error> {
         Text::raw(format!("Total confirmed: {}\n", total.confirmed)),
         Text::raw(format!("Total deaths: {} ({:.2}%)\n", total.deaths, get_percentage(total.deaths, total.confirmed))),
         Text::raw(format!("Total recovered: {} ({:.2}%)\n", total.recovered, get_percentage(total.recovered, total.confirmed))),
+        Text::raw(format!("Total active cases: {}\n", total.active)),
     ];
 
-    let (mut confirmed_data, mut deaths_data, mut recovered_data) = get_chart_from_country(&countries_map, "TOTAL".to_string());
+    let (mut confirmed_data, mut deaths_data, mut recovered_data, mut active_data) = get_chart_from_country(&countries_map, "TOTAL".to_string());
     let mut current_table = get_table_columns(&countries_map, DataType::Confirmed);
 
     let stdout = io::stdout().into_raw_mode()?;
@@ -326,7 +369,7 @@ fn main() -> Result<(), failure::Error> {
         terminal.draw(|mut f| {
             let selected_style = Style::default().fg(Color::Yellow).modifier(Modifier::BOLD);
             let normal_style = Style::default().fg(Color::White);
-            let header = ["Country", "Confirmed", "Deaths", "Deaths (%)", "Recovered", "Recovered (%)"];
+            let header = ["Country", "Confirmed", "Deaths", "Deaths (%)", "Recovered", "Recovered (%)", "Active cases"];
 
             let rects = Layout::default()
                 .direction(Direction::Vertical)
@@ -360,7 +403,7 @@ fn main() -> Result<(), failure::Error> {
                 .collect::<Vec<tui::layout::Constraint>>();
 
             let mut table = Table::new(header.iter(), rows)
-                .block(Block::default().borders(Borders::ALL).title("Corona virus - Sort by: (c) confirmed, (d) deaths, (r) recovered"))
+                .block(Block::default().borders(Borders::ALL).title("Corona virus - Sort by: (c) confirmed, (d) deaths, (r) recovered, (a) active"))
                 .widths(&widths);
             f.render(&mut table, rects[0]);
 
@@ -380,6 +423,11 @@ fn main() -> Result<(), failure::Error> {
                     .marker(Marker::Braille)
                     .style(Style::default().fg(Color::Yellow))
                     .data(&recovered_data),
+                Dataset::default()
+                    .name("Active")
+                    .marker(Marker::Braille)
+                    .style(Style::default().fg(Color::Magenta))
+                    .data(&active_data),
             ];
 
             // Labels. Put some extra to the end for empty space (btw. There's too many labels, so tui-rs decided not to show them at all)
@@ -438,7 +486,7 @@ fn main() -> Result<(), failure::Error> {
                     if app.selected > current_table.len() - 1 {
                         app.selected = 0;
                     }
-                    selected_country = update_data(&countries_map, &current_table, app.selected, &mut confirmed_data, &mut deaths_data, &mut recovered_data);
+                    selected_country = update_data(&countries_map, &current_table, app.selected, &mut confirmed_data, &mut deaths_data, &mut recovered_data, &mut active_data);
                 }
                 Key::Up => {
                     if app.selected > 0 {
@@ -446,19 +494,23 @@ fn main() -> Result<(), failure::Error> {
                     } else {
                         app.selected = current_table.len() - 1;
                     }
-                    selected_country = update_data(&countries_map, &current_table, app.selected, &mut confirmed_data, &mut deaths_data, &mut recovered_data);
+                    selected_country = update_data(&countries_map, &current_table, app.selected, &mut confirmed_data, &mut deaths_data, &mut recovered_data, &mut active_data);
+                }
+                Key::Char('a') => {
+                    current_table = get_table_columns(&countries_map, DataType::Active);
+                    selected_country = update_data(&countries_map, &current_table, app.selected, &mut confirmed_data, &mut deaths_data, &mut recovered_data, &mut active_data);
                 }
                 Key::Char('c') => {
                     current_table = get_table_columns(&countries_map, DataType::Confirmed);
-                    selected_country = update_data(&countries_map, &current_table, app.selected, &mut confirmed_data, &mut deaths_data, &mut recovered_data);
+                    selected_country = update_data(&countries_map, &current_table, app.selected, &mut confirmed_data, &mut deaths_data, &mut recovered_data, &mut active_data);
                 }
                 Key::Char('d') => {
                     current_table = get_table_columns(&countries_map, DataType::Deaths);
-                    selected_country = update_data(&countries_map, &current_table, app.selected, &mut confirmed_data, &mut deaths_data, &mut recovered_data);
+                    selected_country = update_data(&countries_map, &current_table, app.selected, &mut confirmed_data, &mut deaths_data, &mut recovered_data, &mut active_data);
                 }
                 Key::Char('r') => {
                     current_table = get_table_columns(&countries_map, DataType::Recovered);
-                    selected_country = update_data(&countries_map, &current_table, app.selected, &mut confirmed_data, &mut deaths_data, &mut recovered_data);
+                    selected_country = update_data(&countries_map, &current_table, app.selected, &mut confirmed_data, &mut deaths_data, &mut recovered_data, &mut active_data);
                 }
                 _ => {}
             },

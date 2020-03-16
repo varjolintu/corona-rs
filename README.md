@@ -7,5 +7,3 @@ The data source is [here](https://github.com/CSSEGISandData/COVID-19/tree/master
 Screenshots:
 
 ![Large terminal](https://raw.githubusercontent.com/varjolintu/corona-rs/master/ss_large.png)
-
-![Small terminal](https://raw.githubusercontent.com/varjolintu/corona-rs/master/ss_small.png)
