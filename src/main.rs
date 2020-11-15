@@ -202,7 +202,12 @@ fn add_active(countries_map: &mut HashMap<String, Country>) {
         for i in country.active_map.iter_mut() {
             let recovered = recovered_iter.next().unwrap();
             let deaths = deaths_iter.next().unwrap();
-            *i -= *recovered + deaths;
+
+            if *recovered + deaths <= *i {
+                *i = *recovered + deaths;
+            } else {
+                *i = 0;
+            }
         }
 
         country.active = *country.active_map.last().unwrap();
